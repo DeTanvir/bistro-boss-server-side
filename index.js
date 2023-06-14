@@ -1,6 +1,8 @@
 const express = require('express');
 const app = express();
 const cors = require('cors');
+// jwt 
+const jwt = require('jsonwebtoken');
 // mongoDB 
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 // dot env
@@ -10,6 +12,41 @@ const port = process.env.PORT || 5000;
 // middleware
 app.use(cors());
 app.use(express.json());
+
+
+
+
+// ======================================================================================
+//                                verifyJWT 
+// ======================================================================================
+// ======================================================================================
+// verify [JWT] to whether the [requesting-email] has valid token or not 
+const verifyJWT = (req, res, next) => {
+    const authorization = req.headers.authorization;
+    if (!authorization) {
+        return res.status(401).send({ error: true, message: 'unauthorized access' })
+    }
+    // bearer token
+    const token = authorization.split(' ')[1];
+
+    // Main [jwt-verification]
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+        // if [error] happens, return
+        if (err) {
+            return res.status(401).send({ error: true, message: 'unauthorized access' })
+        }
+
+        // user's [token-decoded]
+        req.decoded = decoded;
+        // calling the [user's-get] function, after [jwt-verify]
+        next();
+    })
+}
+// ======================================================================================
+// ======================================================================================
+// ======================================================================================
+
+
 
 
 
@@ -31,6 +68,9 @@ async function run() {
         // await client.connect();
 
 
+        // ======================================================================================
+        // ======================================================================================
+        // ======================================================================================
         // DB collections
         // for [users]
         const usersCollection = client.db('bistroDb').collection('users');
@@ -40,9 +80,35 @@ async function run() {
         const reviewCollection = client.db('bistroDb').collection('reviews');
         // for [cart-items]
         const cartCollection = client.db('bistroDb').collection('carts');
+        // ======================================================================================
+        // ======================================================================================
+        // ======================================================================================
 
 
 
+        // ======================================================================================
+        // JWT token creation
+        // ======================================================================================
+        // ======================================================================================
+        // JWT request[is not an async-await function]
+        app.post('/jwt', (req, res) => {
+            const user = req.body;
+            // token comes from [jwt.io]
+            const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+            res.send({ token });
+        })
+        // ======================================================================================
+        // ======================================================================================
+        // ======================================================================================
+
+
+
+
+
+        // ======================================================================================
+        // MENU
+        // ======================================================================================
+        // ======================================================================================
         // 
         // [menuCollection] related apis
         //
@@ -51,8 +117,18 @@ async function run() {
             const result = await menuCollection.find().toArray();
             res.send(result);
         });
+        // ======================================================================================
+        // ======================================================================================
+        // ======================================================================================
 
 
+
+
+
+        // ======================================================================================
+        // REVIEWS
+        // ======================================================================================
+        // ======================================================================================
         // 
         // [reviewCollection] related apis
         //
@@ -61,18 +137,41 @@ async function run() {
             const result = await reviewCollection.find().toArray();
             res.send(result);
         });
+        // ======================================================================================
+        // ======================================================================================
+        // ======================================================================================
 
 
 
-        // 
+
+
+        // ======================================================================================
+        // CART
+        // ======================================================================================
+        // ======================================================================================
+        //  
         // [cartCollection] related apis
         // 
         // get items from cart for specific email
-        app.get('/carts', async (req, res) => {
+        // verifying [verifyJWT] for valid-token
+        app.get('/carts', verifyJWT, async (req, res) => {
             const email = req.query.email;
             if (!email) {
                 res.send([])
             }
+
+
+            // [security-level1]-use [verifyJWT]
+            // [security-level2]-email-matching            
+            // for [verifyJWT] email matching
+            const decodedEmail = req.decoded.email;
+            if (email !== decodedEmail) {
+                return res.status(403).send({ error: true, message: 'forbidden access' });
+            }
+
+
+
+
             else {
                 const query = { email: email };
                 const result = await cartCollection.find(query).toArray();
@@ -93,8 +192,17 @@ async function run() {
             const result = await cartCollection.deleteOne(query);
             res.send(result);
         });
+        // ======================================================================================
+        // ======================================================================================
+        // ======================================================================================
 
 
+
+
+        // ======================================================================================
+        // USERS
+        // ======================================================================================
+        // ======================================================================================
         // 
         // [userCollection] related apis
         //
@@ -107,7 +215,7 @@ async function run() {
         // post an user to the [user-db]
         app.post('/users', async (req, res) => {
             const user = req.body;
-            console.log(user);
+            // console.log(user);
 
             // [checking] of whether [the-user] is already in [usersCollection] or not
             const query = { email: user.email }
@@ -123,6 +231,55 @@ async function run() {
             const result = await usersCollection.insertOne(user);
             res.send(result);
         });
+
+        // delete an user from the userDB
+        app.delete('/users/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) }
+            const result = await usersCollection.deleteOne(query);
+            res.send(result);
+        });
+        // update an [user's role] by patch, ['/users/admin/:id'] to understand that: it is [admin-operation]
+        app.patch('/users/admin/:id', async (req, res) => {
+            const id = req.params.id;
+            // [filter] is to find the right [user] by [id]
+            const filter = { _id: new ObjectId(id) };
+            // this is to determine which field would be updated
+            const updateDoc = {
+                $set: {
+                    role: `admin`
+                },
+            };
+            const result = await usersCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        })
+        // checking of whether a user is [admin] or not 
+        app.get('/users/admin/:email', verifyJWT, async (req, res) => {
+            const email = req.params.email;
+
+
+            // [security-level1]-use [verifyJWT]
+            // [security-level2]-email-matching
+            // [security-level3]-check-admin
+                        
+            // for [verifyJWT] email matching
+            const decodedEmail = req.decoded.email;
+            if (email !== decodedEmail) {
+                return res.status(403).send({ error: true, message: 'forbidden access' });
+            }
+
+
+            else {
+                const query = { email: email };
+                const user = await usersCollection.findOne(query);
+                const result = { admin: user?.role === 'admin' }
+            }
+        })
+        // ======================================================================================
+        // ======================================================================================
+        // ======================================================================================
+        // 
+
 
 
 
